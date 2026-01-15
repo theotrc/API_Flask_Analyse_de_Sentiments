@@ -3,27 +3,26 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
 
+
 app = Flask(__name__)
-app.config.from_object('config')
 
-# Create database connection object
-db = SQLAlchemy(app)
-#db.init_app(app)
+# During testing we avoid importing heavy TensorFlow packages and loading
+# the model at import time. CI/tests should set `TESTING=1` to use a stub.
+if os.environ.get('TESTING') == '1':
+	class _DummyModel:
+		def predict(self, texts):
+			import numpy as _np
+			return _np.array([[0.9, 0.1]])
 
-login_manager = LoginManager()
-login_manager.login_view = 'login'
-login_manager.init_app(app)
+	bert_model = _DummyModel()
+else:
+	import tensorflow as tf
+	import tensorflow_text
+	import tf_keras
 
-from App import views, models
+	bert_model = tf_keras.models.load_model(os.path.join('App', 'models', 'saved_model2'))
 
-
-@login_manager.user_loader
-def load_user(user_id):
-    # since the user_id is just the primary key of our user table, use it in the query for the user
-    return models.User.query.get(int(user_id))
+from App import views
 
 
-@app.cli.command("init_db")
-def init_db():
-    models.init_db()
 

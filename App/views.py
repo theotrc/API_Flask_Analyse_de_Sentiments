@@ -1,11 +1,7 @@
-from flask import Flask, render_template, request, redirect, url_for
-from werkzeug.utils import redirect
-from .utils import row2dict
-from werkzeug.security import generate_password_hash, check_password_hash
-from flask_login import login_user, login_required, current_user, logout_user
-from App import db, app
-from .models import User
+from flask import render_template, request, redirect, url_for, jsonify
+from App import app, utils, bert_model
 from logging import FileHandler, WARNING
+
 
 file_handler = FileHandler('errorlog.txt')
 file_handler.setLevel(WARNING)
@@ -13,70 +9,47 @@ app.logger.addHandler(file_handler)
 
 @app.route("/")
 def home():
-    return render_template("hello.html")
+    return "api prediction de sentiment"
 
+@app.route("/predict", methods=["GET", "POST"])
+def predict():
+    """Accept text to predict from JSON POST {'text': ...}, form-data 'text',
+    or query param ?text=...  Return JSON with predictions.
+    """
+    # extract text from JSON body, form or querystring
+    text = None
+    if request.method == 'POST':
+        data = request.get_json(silent=True)
+        if data and 'text' in data:
+            text = data['text']
+        else:
+            text = request.form.get('text') or request.values.get('text')
+    else:
+        text = request.args.get('text')
 
+    if not text:
+        return jsonify({'error': 'No text provided. Send JSON {"text": "..."} or form/query param "text".'}), 400
 
-@app.route('/signup')
-def signup():
-    return render_template('signup.html')
+    # allow a single string or a list of strings
+    if isinstance(text, str):
+        texts = [text]
+    elif isinstance(text, (list, tuple)):
+        texts = list(text)
+    else:
+        return jsonify({'error': 'Invalid text format; must be string or list of strings.'}), 400
 
+    try:
+        preds = bert_model.predict(texts)
 
-@app.route('/signup', methods=['POST'])
-def signup_post():
-    # code to validate and add user to database goes here
-    email = request.form.get('email')
-    name = request.form.get('name')
-    password = request.form.get('password')
+        preds_list = preds.tolist()
 
-    user = User.query.filter_by(email=email).first() # if this returns a user, then the email already exists in database
+        for i in range(len(preds_list[0])):
+                if preds_list[0][i] > 0.5:
+                    preds_list[0][i] = "POSITIVE"
+                else:
+                    preds_list[0][i] = "NEGATIVE"
+    except Exception as e:
+        app.logger.exception('Prediction failed')
+        return jsonify({'error': str(e)}), 500
 
-    if user: # if a user is found, we want to redirect back to signup page so user can try again
-        return redirect(url_for('signup'))
-
-    # create a new user with the form data. Hash the password so the plaintext version isn't saved.
-    new_user = User(email=email, name=name, password=generate_password_hash(password, method='sha256'))
-
-    # add the new user to the database
-    db.session.add(new_user)
-    db.session.commit()
-
-    return redirect(url_for("login"))
-
-
-@app.route('/login')
-def login():
-    return render_template('login.html')
-
-
-@app.route('/login', methods=['POST'])
-def login_post():
-    # login code goes here
-    email = request.form.get('email')
-    password = request.form.get('password')
-    remember = True if request.form.get('remember') else False
-
-    user = User.query.filter_by(email=email).first()
-
-    # check if the user actually exists
-    # take the user-supplied password, hash it, and compare it to the hashed password in the database
-    if not user or not check_password_hash(user.password, password):
-        return redirect(url_for('login')) # if the user doesn't exist or password is wrong, reload the page
-
-    # if the above check passes, then we know the user has the right credentials
-    login_user(user, remember=remember)
-    return redirect(url_for('private'))
-
-
-@app.route('/private')
-@login_required
-def private():
-    return f"Bonjour {current_user.name}"
-
-
-
-@app.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for('home'))
+    return jsonify({'predictions': preds_list})
