@@ -11,6 +11,7 @@ scikit-learn>=1.2.2
 tensorflow>=2.12.0
 tf_keras>=2.12.0
 tensorflow-text>=2.12.0
+google-cloud-storage>=2.7.0
 
 # Optional / production
 gunicorn>=20.1.0
